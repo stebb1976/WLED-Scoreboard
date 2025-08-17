@@ -1,0 +1,26 @@
+{
+	"folders": [
+		{
+			"name": "WLED Scoreboard",
+			"path": "."
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"*.new": "cpp",
+			"*.bak": "cpp",
+			"cmath": "cpp",
+			"optional": "cpp",
+			"istream": "cpp",
+			"ostream": "cpp",
+			"ratio": "cpp",
+			"system_error": "cpp",
+			"array": "cpp",
+			"functional": "cpp",
+			"regex": "cpp",
+			"tuple": "cpp",
+			"type_traits": "cpp",
+			"utility": "cpp"
+		}
+	}
+}

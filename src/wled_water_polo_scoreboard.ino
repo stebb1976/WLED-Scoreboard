@@ -31,7 +31,7 @@
 #define DST_OFFSET 1                                  // Manually set DST hour adjustment (add one hour) - only used if useCustomOffsets is true below
 #define SYNC_INTERVAL 15                              // How often, in minutes, to sync to NTP server (15-60 minutes recommended) - can be changed via web app
 #define WIFIMODE 2                                    // 0 = Only Soft Access Point, 1 = Only connect to local WiFi network with UN/PW, 2 = Both (both needed for onboarding)
-#define SERIAL_DEBUG 1                                // 0 = Disable (must be disabled if using RX/TX pins), 1 = enable
+#define SERIAL_DEBUG 0                                // 0 = Disable (must be disabled if using RX/TX pins), 1 = enable
 #define FORMAT_LITTLEFS_IF_FAILED true                // DO NOT CHANGE
 #define NUMELEMENTS(x) (sizeof(x) / sizeof(x[0]))     // DO NOT CHANGE - number of elements in array
 // ==============================================================================================
@@ -240,6 +240,7 @@ const unsigned long gameClkMilliSecRstCnt = 420000;  //7 min = 420 seconds
 long lastGameClkMilliSecCnt = gameClkMilliSecRstCnt;
 long gameClkMilliSecCnt = gameClkMilliSecRstCnt;
 bool enGameClk;
+bool syncGameAndShotClks = false;  //Set to true to sync starting and stopping of the game and shot clocks 
 
 //---- Create arrays for characters: These turn on indiviual pixels to create letters/numbers
 //7 segments Digits
@@ -267,13 +268,13 @@ int shotClkPixelPos[2][7][MAX_NUM_LEDS_PER_SEGMENT] = {
   };
 
 int gameClkPixelPos[3][7][MAX_NUM_LEDS_PER_SEGMENT] = {
-  {{545,542,529,523,-1},{526,527,496,497,498},{497,499,500,501,502},{502,489,486,473,-1},{473,474,475,476,477},{477,478,479,544,545},{477,482,493,498,-1}},  //[0] Unit Seconds
+  {{545,542,529,526,-1},{526,527,496,497,498},{497,499,500,501,502},{502,489,486,473,-1},{473,474,475,476,477},{477,478,479,544,545},{477,482,493,498,-1}},  //[0] Unit Seconds
   {{590,577,574,561,-1},{561,560,463,462,461},{461,460,459,458,457},{457,454,441,438,-1},{438,437,436,435,434},{434,433,432,591,590},{434,445,450,461,-1}},  //[1] Ten Second
   {{641,638,625,622,-1},{622,623,400,401,402},{402,403,404,405,406},{406,393,390,377,-1},{377,378,379,380,381},{381,382,383,640,641},{381,386,397,402,-1}},  //[2] Unit Minutes
   };
 
-  int gameClkSeparatorPixelPos[NUM_SEPARATOR_SEGS][PIXELS_PER_SEPARATOR_SEG] = {
-  {607,416},  //[0] Top Separator
+int gameClkSeparatorPixelPos[NUM_SEPARATOR_SEGS][PIXELS_PER_SEPARATOR_SEG] = {
+  {417,416},  //[0] Top Separator
   {420,421},  //[1] Bottom Separator
   };
 
@@ -668,6 +669,13 @@ void writeConfigFile(bool restart_ESP) {
     PRIMARY WEB PAGES
    =========================*/
 void webMainPage() {
+  const char* toggleLEDsScript = R"rawliteral(
+    <script> 
+      function toggleLEDs() {fetch('/toggleleds').then(() => location.reload());
+      }
+    </script>
+  )rawliteral";
+
   String mainPage = "<html><head>";
   modeCallingPage = "";
   mainPage += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">";  //make page responsive
@@ -732,24 +740,25 @@ void webMainPage() {
     mainPage += "<tr><td>IP Address:</td><td>" + baseIPAddress + "</td</tr>";
     mainPage += "<tr><td>Max Milliamps:</td><td>" + String(milliamps) + "</td></tr>";
     mainPage += "</table><br>";
+
     //Standard mode button header
     mainPage += "<H2>Mode Display & Control</H2>";
     mainPage += "<table><tr><td>";
+
+    mainPage += toggleLEDsScript;
     mainPage += "<button type=\"button\" id=\"btnback\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
-    
     if (ledsOn) {
-      mainPage += "background-color: #63de3e;\" onclick=\"location.href = './toggleleds';\">";
-      mainPage += "Power: ON";
+      mainPage += "background-color: #63de3e;\" onclick=\"toggleLEDs()\">LEDs ON";
     } else {
-      mainPage += "background-color: #c9535a;\" onclick=\"location.href = './toggleleds';\">";
-      mainPage += "Power: OFF";
+      mainPage += "background-color: #c9535a;\" onclick=\"toggleLEDs()\">LEDs OFF";
     }
+    
     mainPage += "</button></td>";
 
     mainPage += "<td>&nbsp;</td><td>&nbsp;</td>";
     mainPage += "</tr><tr><td>&nbsp;</td></tr><tr>";
 
-    //Shot CLock Only Mode
+    //Shot Clock Only Mode
     mainPage += "<td><button id=\"btnclock\" style=\"font-size: 20px; ";
     if (clockMode == 0) {
       mainPage += "background-color: #95f595; font-weight: bold; ";
@@ -767,6 +776,15 @@ void webMainPage() {
     }
     mainPage += "text-align: center; border-radius: 8px; width: 140px; height: 60px;\" onclick=\"location.href = './game_clock';\">Game Clock</button></td>";
   
+    //Game and Shot Clock Mode
+    mainPage += "<td><button id=\"btnclock\" style=\"font-size: 20px; ";
+    if (clockMode == 2) {
+      mainPage += "background-color: #95f595; font-weight: bold; ";
+    } else {
+      mainPage += "background-color: #d6c9d6; ";
+    }
+    mainPage += "text-align: center; border-radius: 8px; width: 140px; height: 60px;\" onclick=\"location.href = './game_and_shot_clock';\">Game & Shot Clock</button></td>";
+ 
   }
   mainPage += "</body></html>";
   mainPage.replace("VAR_APP_NAME", APPNAME);
@@ -796,6 +814,20 @@ void webShotClockPage() {
     </script>
   )";
 
+  const char* toggleEnShotClkScript = R"rawliteral(
+    <script> 
+      function toggleEnShotClk() {fetch('/toggleEnShotClk').then(() => location.reload());
+      }
+    </script>
+  )rawliteral";
+
+  const char* resetShotClkScript = R"rawliteral(
+    <script> 
+      function rstShotClk() {fetch('/rstShotClk').then(() => location.reload());
+      }
+    </script>
+  )rawliteral";
+
   message += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">";  //make page responsive
   message += "<title>Shot Clock Controls</title>\
     <style>\
@@ -806,20 +838,19 @@ void webShotClockPage() {
   message += "<H1>Shot Clock Controls</H1>";
   message += "</td></tr>";
 
+  message += resetShotClkScript;
   message += "<button type=\"button\" id=\"btnback\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
-  message += "\" onclick=\"location.href = './rstShotClk';\">";
-  message += "Reset";
+  message += "\" onclick=\"rstShotClk()\">Reset";
   message += "</button>";
 
   message += "<br><br>";    //Line Space
 
+  message += toggleEnShotClkScript;
   message += "<button type=\"button\" id=\"btnback\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
   if (enShotClk) {
-    message += "background-color: #c9535a;\" onclick=\"location.href = './toggleEnShotClk';\">";
-    message += "Stop";
+    message += "background-color: #c9535a;\" onclick=\"toggleEnShotClk()\">Stop";
   } else {
-    message += "background-color: #63de3e;\" onclick=\"location.href = './toggleEnShotClk';\">";
-    message += "Run";
+    message += "background-color: #63de3e;\" onclick=\"toggleEnShotClk()\">Run";
   }
   message += "</button></td>";
 
@@ -843,6 +874,20 @@ void webShotClockPage() {
 }
 
 void webGameClockPage() {
+  const char* toggleEnGameClkScript = R"rawliteral(
+    <script> 
+      function toggleEnGameClk() {fetch('/toggleEnGameClk').then(() => location.reload());
+      }
+    </script>
+  )rawliteral";
+
+  const char* resetGameClkScript = R"rawliteral(
+    <script> 
+      function rstGameClk() {fetch('/rstGameClk').then(() => location.reload());
+      }
+    </script>
+  )rawliteral";
+
   modeCallingPage = "game_clock";
   clockMode = 1;
   String message = "<html><head>";
@@ -853,8 +898,14 @@ void webGameClockPage() {
       let enable = GAME_CLK_ENABLE; // Set the initial enable state
       const timerElement = document.getElementById('timer');
 
+      function formatTime(seconds) {
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        return String(minutes).padStart(2, '0') + ":" + String(remainingSeconds).padStart(2, '0');
+      }
+
       const interval = setInterval(() => {
-        timerElement.textContent = Math.round(countdown/1000); // Update the timer display
+        timerElement.textContent = formatTime(Math.round(countdown/1000)); // Update the timer display
         if(enable) {countdown = countdown - 100; // Decrease countdown by 10 milliseconds
           if (countdown < 0) {
             clearInterval(interval); // Stop the timer when it reaches 0
@@ -874,20 +925,19 @@ void webGameClockPage() {
   message += "<H1>Game Clock Controls</H1>";
   message += "</td></tr>";
 
+  message += resetGameClkScript;
   message += "<button type=\"button\" id=\"btnback\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
-  message += "\" onclick=\"location.href = './rstGameClk';\">";
-  message += "Reset";
+  message += "\" onclick=\"rstGameClk()\">Reset";
   message += "</button>";
 
   message += "<br><br>";    //Line Space
 
+  message += toggleEnGameClkScript;
   message += "<button type=\"button\" id=\"btnback\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
-  if (enShotClk) {
-    message += "background-color: #c9535a;\" onclick=\"location.href = './toggleEnGameClk';\">";
-    message += "Stop";
+  if (enGameClk) {
+    message += "background-color: #c9535a;\" onclick=\"toggleEnGameClk()\">Stop";
   } else {
-    message += "background-color: #63de3e;\" onclick=\"location.href = './toggleEnGameClk';\">";
-    message += "Run";
+    message += "background-color: #63de3e;\" onclick=\"toggleEnGameClk()\">Run";
   }
   message += "</button></td>";
 
@@ -906,6 +956,183 @@ void webGameClockPage() {
 
   message.replace("INITIAL_GAME_CLK_VAL", String(gameClkMilliSecCnt));
   message.replace("GAME_CLK_ENABLE", String(enGameClk));
+
+  server.send(200, "text/html", message);
+}
+
+void webGameAndShotClockPage() {
+  const char* gameClkCountdownScript = R"rawliteral(
+    <script>
+      let gameCountdown = INITIAL_GAME_CLK_VAL; // Set the countdown start value in seconds
+      let gameEnable = GAME_CLK_ENABLE; // Set the initial enable state
+      const gameTimerElement = document.getElementById('gameClkTimer');
+
+      function formatTime(seconds) {
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        return String(minutes).padStart(2, '0') + ":" + String(remainingSeconds).padStart(2, '0');
+      }
+
+      const gameInterval = setInterval(() => {
+        gameTimerElement.textContent = formatTime(Math.round(gameCountdown/1000)); // Update the timer display
+        if(gameEnable) {gameCountdown = gameCountdown - 100; // Decrease countdown by 10 milliseconds
+          if (gameCountdown < 0) {
+            clearInterval(gameInterval); // Stop the timer when it reaches 0
+          }
+        } 
+      }, 100); // Update every second
+    </script>
+  )rawliteral";
+
+  const char* toggleEnGameClkScript = R"rawliteral(
+    <script> 
+      function toggleEnGameClk() {fetch('/toggleEnGameClk').then(() => location.reload());
+      }
+    </script>
+  )rawliteral";
+
+  const char* resetGameClkScript = R"rawliteral(
+    <script> 
+      function rstGameClk() {fetch('/rstGameClk').then(() => location.reload());
+      }
+    </script>
+  )rawliteral";
+
+  const char* shotClkCountdownScript = R"rawliteral(
+    <script>
+      let countdown = INITIAL_SHOT_CLK_VAL; // Set the countdown start value in seconds
+      let enable = SHOT_CLK_ENABLE; // Set the initial enable state
+      const timerElement = document.getElementById('shotClkTimer');
+
+      const interval = setInterval(() => {
+        timerElement.textContent = Math.round(countdown/1000); // Update the timer display
+        if(enable) {countdown = countdown - 100; // Decrease countdown by 10 milliseconds
+          if (countdown < 0) {
+            clearInterval(interval); // Stop the timer when it reaches 0
+          }
+        } 
+      }, 100); // Update every second
+    </script>
+  )rawliteral";
+
+  const char* toggleEnShotClkScript = R"rawliteral(
+    <script> 
+      function toggleEnShotClk() {fetch('/toggleEnShotClk').then(() => location.reload());
+      }
+    </script>
+  )rawliteral";
+
+  const char* resetShotClkScript = R"rawliteral(
+    <script> 
+      function rstShotClk() {fetch('/rstShotClk').then(() => location.reload());
+      }
+    </script>
+  )rawliteral";
+
+  const char* checkSyncClksScript = R"rawliteral(
+    <script> 
+      document.getElementById("syncClksCheckbox").addEventListener("change", function() {
+        if (this.checked) {
+          fetch('/syncClks').then(() => location.reload());
+        } else {
+          fetch('/unsyncClks').then(() => location.reload());
+        }
+      });
+    </script>
+  )rawliteral";
+
+  const char* setSyncedCheckboxStateScript = R"rawliteral(
+    <script> 
+      document.getElementById("syncClksCheckbox").checked = INITIAL_CHECKBOX_STATE; 
+    </script>
+  )rawliteral";
+
+  modeCallingPage = "game_and_shot_clock";
+  clockMode = 2;
+  String message = "<html><head>";
+
+  //Game Clock Controls
+  message += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">";  //make page responsive
+  message += "<title>Game Clock Controls</title>\
+    <style>\
+    body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #0000ff; }\
+    </style>\
+    </head>\
+    <body>";
+  message += "<H1>Game Clock Controls</H1>";
+  message += "</td></tr>";
+
+  message += resetGameClkScript;
+  message += "<button type=\"button\" id=\"btnback\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
+  message += "\" onclick=\"rstGameClk()\">Reset";
+  message += "</button>";
+
+  message += "<br><br>";    //Line Space
+
+  message += toggleEnGameClkScript;
+  message += "<button type=\"button\" id=\"btnback\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
+  if (syncGameAndShotClks ? (enGameClk|enShotClk) : enGameClk) {
+    message += "background-color: #c9535a;\" onclick=\"toggleEnGameClk()\">Stop";
+  } else {
+    message += "background-color: #63de3e;\" onclick=\"toggleEnGameClk()\">Run";
+  }
+  message += "</button></td>";
+
+  message += "<br><br>";    //Line Space
+
+  message += "<div id=\"gameClkTimer\" style=\"font-size: 48px; color: black; \"></div>";
+
+  //Shot Clock Controls
+  message += "<H1>Shot Clock Controls</H1>";
+  message += "</td></tr>";
+
+  message += resetShotClkScript;
+  message += "<button type=\"button\" id=\"btnback\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
+  message += "\" onclick=\"rstShotClk()\">Reset";
+  message += "</button>";
+
+  message += "<br><br>";    //Line Space
+
+  message += toggleEnShotClkScript;
+  message += "<button type=\"button\" id=\"btnback\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
+  if (syncGameAndShotClks ? (enGameClk|enShotClk) : enShotClk) {
+    message += "background-color: #c9535a;\" onclick=\"toggleEnShotClk()\">Stop";
+  } else {
+    message += "background-color: #63de3e;\" onclick=\"toggleEnShotClk()\">Run";
+  }
+  message += "</button></td>";
+
+  message += "<br><br>";    //Line Space
+
+  message += "<div id=\"shotClkTimer\" style=\"font-size: 48px; color: black; \"></div>";
+
+  message += "<br><br>";    //Line Space
+
+  message += "<button type=\"button\" id=\"btnback\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
+  message += "background-color: #63de3e;\" onclick=\"location.href = './';\">";
+  message += "Home";
+  message += "</button></td>";
+
+  message += "<br><br>";    //Line Space
+
+  message += R"rawliteral(
+            <label>
+              <input type="checkbox" id="syncClksCheckbox">
+              Sync Shot Clock to Game Clock
+            </label>)rawliteral";
+
+  message += gameClkCountdownScript;
+  message += shotClkCountdownScript;
+  message += checkSyncClksScript;
+  message += setSyncedCheckboxStateScript;
+
+  message += "</body></html>";
+
+  message.replace("INITIAL_GAME_CLK_VAL", String(gameClkMilliSecCnt));
+  message.replace("GAME_CLK_ENABLE", String(syncGameAndShotClks ? (enGameClk|enShotClk) : enGameClk));
+  message.replace("INITIAL_SHOT_CLK_VAL", String(shotClkMilliSecCnt));
+  message.replace("SHOT_CLK_ENABLE", String(syncGameAndShotClks ? (enGameClk|enShotClk) : enShotClk));
+  message.replace("INITIAL_CHECKBOX_STATE", String(syncGameAndShotClks));
 
   server.send(200, "text/html", message);
 }
@@ -1013,16 +1240,19 @@ void handleRestart() {
 
 void handleLEDToggle() {
   toggleLEDs(!ledsOn);
-  String page = "<HTML><head>";
-  page += "<meta http-equiv=\"refresh\" content=\"0; url='http://" + baseIPAddress;
-  if (modeCallingPage != "") {
-    page += "/" + modeCallingPage;
-  }
-  page += "'\"><title>Toggling Power</title>\</head><body>";
-  page += "Toggling Display...<br><br>";
-  page += "If you are not automatically redirected, follow this to <a href='http://" + baseIPAddress + "'> return to settings page</a>.";
-  page += "</body></html>";
-  server.send(200, "text/html", page);
+
+  server.send(200, "text/html", "<html><body><h2>Action performed!</h2><a href='/'>Go Back</a></body></html>");
+
+  // String page = "<HTML><head>";
+  // page += "<meta http-equiv=\"refresh\" content=\"0; url='http://" + baseIPAddress;
+  // if (modeCallingPage != "") {
+  //   page += "/" + modeCallingPage;
+  // }
+  // page += "'\"><title>Toggling Power</title>\</head><body>";
+  // page += "Toggling Display...<br><br>";
+  // page += "If you are not automatically redirected, follow this to <a href='http://" + baseIPAddress + "'> return to settings page</a>.";
+  // page += "</body></html>";
+  // server.send(200, "text/html", page);
 }
 
 void handleRstShotClk() {
@@ -1042,22 +1272,77 @@ void handleRstShotClk() {
   if (modeCallingPage != "") {
     page += "/" + modeCallingPage;
   }
-  page += "'\"><title>Toggling Power</title>\</head><body>";
-  page += "Toggling Display...<br><br>";
+  page += "'\"><title>Reset Shot Clock</title>\</head><body>";
+  page += "Resetting Shot Clock...<br><br>";
   page += "If you are not automatically redirected, follow this to <a href='http://" + baseIPAddress + "'> return to settings page</a>.";
   page += "</body></html>";
   server.send(200, "text/html", page);
 }
 
+void handleSyncClks() {
+  syncGameAndShotClks = true;
+  enGameClk = enShotClk;
+}
+
+void handleUnSyncClks() {
+  syncGameAndShotClks = false;
+}
+
 void handleToggleEnShotClk() {
   enShotClk = !enShotClk;
+  if(syncGameAndShotClks) {
+    enGameClk = !enGameClk;
+  }
+  
   String page = "<HTML><head>";
   page += "<meta http-equiv=\"refresh\" content=\"0; url='http://" + baseIPAddress;
   if (modeCallingPage != "") {
     page += "/" + modeCallingPage;
   }
-  page += "'\"><title>Toggling Power</title>\</head><body>";
-  page += "Toggling Display...<br><br>";
+  page += "'\"><title>Toggle Shot Clock Enable</title>\</head><body>";
+  page += "Toggling Shot Clock Enable...<br><br>";
+  page += "If you are not automatically redirected, follow this to <a href='http://" + baseIPAddress + "'> return to settings page</a>.";
+  page += "</body></html>";
+  server.send(200, "text/html", page);
+}
+
+void handleRstGameClk() {
+  //Reset the LED Counter
+  gameClkMilliSecCnt = gameClkMilliSecRstCnt;
+  lastGameClkMilliSecCnt = gameClkMilliSecRstCnt;
+  fill_solid(LEDs, NUM_LEDS, CRGB::Black);
+  displayGameClkValue(gameClkMilliSecRstCnt/1000, CRGB::Green);
+  FastLED.show();
+  #if defined(SERIAL_DEBUG) && (SERIAL_DEBUG == 1)
+    Serial.println("gameClkMilliSecCnt " + String(gameClkMilliSecCnt/1000));
+  #endif
+
+  //Reset the Webpage Counter
+  String page = "<HTML><head>";
+  page += "<meta http-equiv=\"refresh\" content=\"0; url='http://" + baseIPAddress;
+  if (modeCallingPage != "") {
+    page += "/" + modeCallingPage;
+  }
+  page += "'\"><title>Reset Game Clock</title>\</head><body>";
+  page += "Resetting Game Lock...<br><br>";
+  page += "If you are not automatically redirected, follow this to <a href='http://" + baseIPAddress + "'> return to settings page</a>.";
+  page += "</body></html>";
+  server.send(200, "text/html", page);
+}
+
+void handleToggleEnGameClk() {
+  enGameClk = !enGameClk;
+  if(syncGameAndShotClks) {
+    enShotClk = !enShotClk;
+  }
+
+  String page = "<HTML><head>";
+  page += "<meta http-equiv=\"refresh\" content=\"0; url='http://" + baseIPAddress;
+  if (modeCallingPage != "") {
+    page += "/" + modeCallingPage;
+  }
+  page += "'\"><title>Toggle Game Clock Enable</title>\</head><body>";
+  page += "Toggling Game Clock Enable...<br><br>";
   page += "If you are not automatically redirected, follow this to <a href='http://" + baseIPAddress + "'> return to settings page</a>.";
   page += "</body></html>";
   server.send(200, "text/html", page);
@@ -1100,6 +1385,7 @@ void handleReset() {
 void handleNotFound() {
   server.send(404, "text/plain", "Not found");
 }
+
 void handleWebUpdateEnd() {
   server.sendHeader("Connection", "close");
   if (Update.hasError()) {
@@ -1164,15 +1450,17 @@ void setupWebHandlers() {
   server.on("/", webMainPage);
   server.on("/shot_clock", webShotClockPage);
   server.on("/game_clock", webGameClockPage);
-  server.on(
-    "/update", HTTP_POST,
-    []() {
-      handleWebUpdateEnd();
-    },
-    []() {
-      handleWebUpdate();
-    }
-  );
+  server.on("/game_and_shot_clock", webGameAndShotClockPage);
+  
+  // server.on(
+  //   "/update", HTTP_POST,
+  //   []() {
+  //     handleWebUpdateEnd();
+  //   },
+  //   []() {
+  //     handleWebUpdate();
+  //   }
+  // );
 
  //Change modes
   // server.on("/shot_clock", changeModeClock);
@@ -1183,7 +1471,14 @@ void setupWebHandlers() {
   server.on("/toggleleds", handleLEDToggle);
   server.on("/rstShotClk", handleRstShotClk);
   server.on("/toggleEnShotClk", handleToggleEnShotClk);
+  server.on("/rstGameClk", handleRstGameClk);
+  server.on("/toggleEnGameClk", handleToggleEnGameClk);
   server.on("/onboard", handleOnboard);
+  server.on("/restart", handleRestart);
+  server.on("/reset", handleReset);
+  server.on("/syncClks", handleSyncClks);
+  server.on("/unsyncClks", handleUnSyncClks);
+
   server.onNotFound(handleNotFound);
 }
 
@@ -1309,13 +1604,13 @@ void loop() {
   // LEDs[0] = CRGB::Red; FastLED.show(); delay (200);
   // LEDs[0] = CRGB::Blue; FastLED.show(); delay (200);
 
-  switch(clockMode) {
-    case 0: //Shot Clock Mode
       //Check if one sec has elasped
       milliSecCntr = millis();
       deltaMilliSecCnt = milliSecCntr - lastMilliSecCnt;
       if(enShotClk) shotClkMilliSecCnt = shotClkMilliSecCnt - deltaMilliSecCnt;
+      if(enGameClk) gameClkMilliSecCnt = gameClkMilliSecCnt - deltaMilliSecCnt;
       lastMilliSecCnt = milliSecCntr;
+
       if((lastShotClkMilliSecCnt - shotClkMilliSecCnt) > 1000) {
         if(shotClkMilliSecCnt < 0) shotClkMilliSecCnt = 0; //Prevent negative count)
         lastShotClkMilliSecCnt = shotClkMilliSecCnt;
@@ -1332,13 +1627,7 @@ void loop() {
           // Serial.println("float(shotClkMilliSecCnt/10000)/10 " + String(temp));
         #endif
       }
-      break;
-    case 1: //Game Clock Mode
-      //Check if one sec has elasped
-      milliSecCntr = millis();
-      deltaMilliSecCnt = milliSecCntr - lastMilliSecCnt;
-      if(enGameClk) gameClkMilliSecCnt = gameClkMilliSecCnt - deltaMilliSecCnt;
-      lastMilliSecCnt = milliSecCntr;
+      
       if((lastGameClkMilliSecCnt - gameClkMilliSecCnt) > 1000) {
         if(gameClkMilliSecCnt < 0) gameClkMilliSecCnt = 0; //Prevent negative count)
         lastGameClkMilliSecCnt = gameClkMilliSecCnt;
@@ -1355,8 +1644,8 @@ void loop() {
           // Serial.println("float(shotClkMilliSecCnt/10000)/10 " + String(temp));
         #endif
       }
-      break;
-  }
+      // break;
+  // }
 
   server.handleClient();
 
@@ -1424,7 +1713,7 @@ void displayShotClkDigit(byte digit, byte digitPlace, CRGB color) {
 }
 
 void displayGameClkValue(int min, int sec, CRGB color) {
-  displayGameClkDigit(min%10,0,color); //Ones Minutes
+  displayGameClkDigit(min%10,2,color); //Ones Minutes
   displayGameClkSeparator(CRGB::Green); //":"  TODO this only need to be called when the game clk is first enabled
   displayGameClkDigit(sec/10,1,color); //Tens Seconds
   displayGameClkDigit(sec%10,0,color); //Ones Seconds

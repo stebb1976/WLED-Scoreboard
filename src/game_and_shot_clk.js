@@ -1,0 +1,47 @@
+// JavaScript for Water Polo Scoreboard Game & Shot Clk Page
+
+let syncGameAndShotClks = SYNC_CLKS; // Set the initial sync state 
+
+//Create internal timers to update the display
+const interval = setInterval(() => {
+  // Game Clock Timer
+  if(gameClkEn) {
+    gameClkCnt = gameClkCnt - 100; // Decrease countdown by 10 milliseconds
+    if (gameClkCnt < 0)  gameClkCnt = 0;
+  } 
+  gameTimerElement.textContent = formatTime(Math.round(gameClkCnt/1000)); // Update the timer display
+
+  // Shot Clock Timer
+  if(shotClkEn) {
+    //If the shot clock is greater than the game clock then make them equal
+    if(shotClkCnt > gameClkCnt) {
+      shotClkCnt = gameClkCnt;
+      //Automatically sync the start/stop for the game and shot clk when the game clk & shot clk are the same
+      document.getElementById("syncClksCheckbox").checked = true;
+      syncClks();    
+    }
+    shotClkCnt = shotClkCnt - 100; // Decrease countdown by 100 milliseconds
+    if (shotClkCnt < 0) shotClkCnt = 0;
+  } 
+  shotClkTimerElement.textContent = Math.round(shotClkCnt/1000); // Update the timer display
+  
+}, 100); // Update every second
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById('btnHome').addEventListener('click', () => { location.href = './'; });
+  document.getElementById("syncClksCheckbox").addEventListener("change", syncClks);
+});
+
+function syncClks() {
+  syncGameAndShotClks = document.getElementById("syncClksCheckbox").checked;
+  if(syncGameAndShotClks) {
+    //If either clock is running, make them both run
+    gameClkEn = shotClkEn | gameClkEn;
+    shotClkEn = shotClkEn | gameClkEn;
+    setGameClkButtonState();
+    setShotClkButtonState();
+  }
+  fetch(syncGameAndShotClks ? '/syncClks' : '/unsyncClks');
+}
+
+

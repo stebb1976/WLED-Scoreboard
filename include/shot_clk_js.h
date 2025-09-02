@@ -11,7 +11,6 @@ let shotClkEn = SHOT_CLK_ENABLE; // Set the initial enable state
 let rstShotClkCnt = RESET_SHOT_CLK_VAL; // Set the Reset state
 const shotClkTimerElement = document.getElementById('shotClkTimer');
 
-
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById('btnRunShotClk').addEventListener('click', toggleRunShotClk);
   document.getElementById('btnRstShotClk').addEventListener('click', rstShotClk);

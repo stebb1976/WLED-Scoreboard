@@ -21,8 +21,9 @@ const interval = setInterval(() => {
     //If the shot clock is greater than the game clock then make them equal
     if(shotClkCnt > gameClkCnt) {
       shotClkCnt = gameClkCnt;
+      //Automatically sync the start/stop for the game and shot clk when the game clk & shot clk are the same
       document.getElementById("syncClksCheckbox").checked = true;
-      syncClks();   //Automatically sync the game and shot clk 
+      syncClks();    
     }
     shotClkCnt = shotClkCnt - 100; // Decrease countdown by 100 milliseconds
     if (shotClkCnt < 0) shotClkCnt = 0;

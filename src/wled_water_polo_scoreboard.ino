@@ -96,6 +96,11 @@ bool onboarding = false;        //Will be set to true if no config file or wifi 
 long daylightOffsetHours = 0;   //EDT: offset of 1 hour (GMT -4) during DST dates (set in code when time obtained)
 int milliamps = MILLI_AMPS;     //Limited to 5,000 - 25,000 milliamps.
 
+<<<<<<< HEAD
+=======
+ClockMode clockMode = defaultClockMode;
+
+>>>>>>> 56fc0fdfba5d4836d465623ff32fae8c6aa9558c
 //Misc. App Variables
 byte holdBrightness = brightness;         //Hold variable for toggling LEDs off/on
 bool ledsOn = true;                       //Set to false when LEDs turned off via web or rotary knob.
@@ -113,9 +118,12 @@ ESP32Time rtc(0);  // offset handled via NTP time server
 WebServer server(80);
 CRGB LEDs[NUM_LEDS];
 
+<<<<<<< HEAD
 ClockMode defaultClockMode = GameAndShotClkMode;
 ClockMode clockMode = defaultClockMode;
 
+=======
+>>>>>>> 56fc0fdfba5d4836d465623ff32fae8c6aa9558c
 //Shot Clock Variables
 const unsigned long shotClkMilliSecRstCnt = 30000;  //30 seconds
 long lastShotClkMilliSecCnt = shotClkMilliSecRstCnt;

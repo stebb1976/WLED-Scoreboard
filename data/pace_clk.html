@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Interval Timer Setup</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <div class="container">
+      <h2>Interval Sequence Setup</h2>
+
+      <script src="utils.js"></script>
+      <script src="pace_clk.js"></script>
+
+      <div id="intervals">
+        <div class="interval-row">
+          <input type="text" value="Interval 1" class="label-input" />
+          <input type="number" value="60" min="1" class="time-input" />
+          <button onclick="removeInterval(this)">Remove</button>
+        </div>
+      </div>
+
+      <button onclick="addInterval()">Add Interval</button>
+
+      <div class="controls">
+        <button onclick="startSequence()">Start</button>
+        <button onclick="nextInterval()">Next</button>
+        <button onclick="resetSequence()">Reset</button>
+      </div>
+    </div>
+
+    <div id="paceClkTimer" class="sticky-timer"></div>
+
+  </body>
+</html>

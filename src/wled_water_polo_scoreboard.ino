@@ -17,6 +17,7 @@
 #include <WiFiUdp.h>
 #define FASTLED_INTERNAL        //Suppress FastLED SPI/bitbanged compiler warnings (only applies after first compile)
 #include <FastLED.h>
+#include <esp_now.h>
 
 #include "homepage_js.h" // Include the auto-generated header
 #include "game_and_shot_clk_js.h" // Include the auto-generated header
@@ -26,6 +27,8 @@
 #include "shot_clk_only_js.h" // Include the auto-generated header
 #include "game_clk_only_js.h" // Include the auto-generated header
 #include "pace_clk_js.h" // Include the auto-generated header
+#include "pace_clk_html.h" // Include the auto-generated header
+
 
 #define VERSION "v0.1"
 #define APPNAME "MATRIX CLOCK"
@@ -96,11 +99,6 @@ bool onboarding = false;        //Will be set to true if no config file or wifi 
 long daylightOffsetHours = 0;   //EDT: offset of 1 hour (GMT -4) during DST dates (set in code when time obtained)
 int milliamps = MILLI_AMPS;     //Limited to 5,000 - 25,000 milliamps.
 
-<<<<<<< HEAD
-=======
-ClockMode clockMode = defaultClockMode;
-
->>>>>>> 56fc0fdfba5d4836d465623ff32fae8c6aa9558c
 //Misc. App Variables
 byte holdBrightness = brightness;         //Hold variable for toggling LEDs off/on
 bool ledsOn = true;                       //Set to false when LEDs turned off via web or rotary knob.
@@ -112,18 +110,25 @@ long lastReconnectAttempt = 0;
 time_t now;
 tm timeinfo;
 WiFiUDP ntpUDP;
-// HTTPClient http;
 ESP32Time rtc(0);  // offset handled via NTP time server
-
 WebServer server(80);
+
 CRGB LEDs[NUM_LEDS];
 
-<<<<<<< HEAD
+WiFiClient espClient;
+
+uint8_t receiverAddress[] = {0x24, 0x6F, 0x28, 0xAA, 0xBB, 0xCC}; // Replace with receiver MAC
+
+typedef struct struct_message {
+  int clockTime;
+  bool ledState;
+} struct_message;
+
+struct_message myData;
+
 ClockMode defaultClockMode = GameAndShotClkMode;
 ClockMode clockMode = defaultClockMode;
 
-=======
->>>>>>> 56fc0fdfba5d4836d465623ff32fae8c6aa9558c
 //Shot Clock Variables
 const unsigned long shotClkMilliSecRstCnt = 30000;  //30 seconds
 long lastShotClkMilliSecCnt = shotClkMilliSecRstCnt;
@@ -140,9 +145,9 @@ bool enGameClk;   //Display game clock on matrix
 bool syncGameAndShotClks = true;  //Set to true to sync starting and stopping of the game and shot clocks 
 
 //Pace Clock Variables
-const unsigned long paceClkMilliSecRstCnt = 60000;  //60 seconds
-long lastPaceClkMilliSecCnt = paceClkMilliSecRstCnt;
-long paceClkMilliSecCnt = paceClkMilliSecRstCnt;
+unsigned long paceClkRolloverMilliSecCnt = 60000;  //60 seconds
+long lastPaceClkMilliSecCnt = paceClkRolloverMilliSecCnt;
+long paceClkMilliSecCnt = paceClkRolloverMilliSecCnt;
 bool runPaceClk;
 bool enPaceClk;   //Display pace clock on matrix
 bool paceCountdown = false;
@@ -187,6 +192,9 @@ int paceClkPixelPos[2][7][MAX_NUM_LEDS_PER_SEGMENT] = {
   {{974,961,958,945,-1},{945,944,79,78, 77},{77,76,75,74,73},{73,70,57,54,-1},{54,53,52,51,50},{50,49,48,975,974},{50,61,66,77,-1}},  //[0] Unit Seconds
   {{1009,1006,993,990,-1},{990,991,32,33,34},{34,35,36,37,38},{38,25,22,9,-1},{9,10,11,12,13},{13,14,15,1008,1009},{13,18,29,34,-1}},  //[1] Ten Seconds
   };
+
+//Forward Declarations
+void listFiles(fs::FS &fs, const char * dirname, uint8_t levels);
 
 //=======================================
 // Read config file from flash (LittleFS)
@@ -288,7 +296,7 @@ void readConfigFile() {
       onboarding = true;
     }
 
-    LittleFS.end();  //End - need to prevent issue with OTA updates
+    // LittleFS.end();  //End - need to prevent issue with OTA updates
   } else {
     //could not mount filesystem
     #if defined(SERIAL_DEBUG) && (SERIAL_DEBUG == 1)
@@ -347,7 +355,7 @@ void writeConfigFile(bool restart_ESP) {
         Serial.println("Settings saved.");
       #endif
       configFile.close();
-      LittleFS.end();
+      // LittleFS.end();
       if (restart_ESP) {
         ESP.restart();
       }
@@ -471,6 +479,8 @@ void webMainPage() {
     }
     mainPage += "text-align: center; border-radius: 8px; width: 140px; height: 60px;\" onclick=\"location.href = './game_and_shot_clk';\">Game & Shot Clock</button></td>";
  
+    mainPage += "<br><br>";    //Line Space
+
     //Pace Clock Mode
     mainPage += "<td><button id=\"btnclock\" style=\"font-size: 20px; ";
     if (clockMode == PaceClkMode) {
@@ -479,6 +489,13 @@ void webMainPage() {
       mainPage += "background-color: #d6c9d6; ";
     }
     mainPage += "text-align: center; border-radius: 8px; width: 140px; height: 60px;\" onclick=\"location.href = './pace_clk';\">Pace Clock</button></td>";
+ 
+    mainPage += "<br><br>";    //Line Space
+
+    //Display JSON Config File
+    mainPage += "<td><button id=\"btnDisplayConfigFile\" style=\"font-size: 20px; ";
+    mainPage += "background-color: #95f595; font-weight: bold; ";
+    mainPage += "text-align: center; border-radius: 8px; width: 140px; height: 60px;\" onclick=\"location.href = './view_config';\">View Config</button></td>";
  
   }
 
@@ -712,11 +729,19 @@ void webGameAndShotClockPage() {
   message += "<br><br>";    //Line Space
 
   //Sync Clocks Checkbox
-  message += R"rawliteral(
+  if(syncGameAndShotClks) {
+    message += R"rawliteral(
             <label>
               <input type="checkbox" id="syncClksCheckbox" checked>
               Sync Shot Clock to Game Clock
             </label>)rawliteral";
+  } else {
+    message += R"rawliteral(
+            <label>
+              <input type="checkbox" id="syncClksCheckbox">
+              Sync Shot Clock to Game Clock
+            </label>)rawliteral";
+  }
 
   //JavaScript Section
   message += "<script>";
@@ -742,77 +767,139 @@ void webGameAndShotClockPage() {
 
 void webPaceClockPage() {
   clockMode = PaceClkMode;
-  String message = "<html><head>";
+  // String message;
 
-  //Shot Clock Controls
-  message += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">";  //make page responsive
-  message += "<title>Pace Clock Controls</title>\
-    <style>\
-    body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #0000ff; }\
-    </style>\
-    </head>\
-    <body>";
+  // message = "<html><head>";
 
-  //Pace Clock Controls
-  message += "<H1>Pace Clock Controls</H1>";
-  message += "</td></tr>";
+  // //Shot Clock Controls
+  // message += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">";  //make page responsive
+  // message += "<title>Pace Clock Controls</title>\
+  //   <style>\
+  //   body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #0000ff; }\
+  //   </style>\
+  //   </head>\
+  //   <body>";
 
-  //Reset Pace Clock Button
-  message += "<button type=\"button\" id=\"btnRstPaceClk\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
-  message += "\">Reset</button>";
+  // //Pace Clock Controls
+  // message += "<H1>Pace Clock Controls</H1>";
+  // message += "</td></tr>";
 
-  message += "<br><br>";    //Line Space
+  // //Reset Pace Clock Button
+  // message += "<button type=\"button\" id=\"btnRstPaceClk\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
+  // message += "\">Reset</button>";
 
-  //Pace Clock Run/Stop Button
-  message += "<button type=\"button\" id=\"btnRunPaceClk\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
-  if (runPaceClk) {
-    message += "background-color: #c9535a;\"\">Stop";
+  // message += "<input type=\"number\" inputmode=\"numeric\" pattern=\"\d*\" id=\"txtboxRolloverVal\" name=\"rolloverVal\" placeholder=60>";
+
+  // message += "<br><br>";    //Line Space
+
+  // //Pace Clock Run/Stop Button
+  // message += "<button type=\"button\" id=\"btnRunPaceClk\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
+  // if (runPaceClk) {
+  //   message += "background-color: #c9535a;\"\">Stop";
+  // } else {
+  //   message += "background-color: #63de3e;\"\">Run";
+  // }
+  // message += "</button></td>";
+
+  // message += "<br><br>";    //Line Space
+
+  // //Pace Clock Display
+  // message += "<div id=\"paceClkTimer\" style=\"font-size: 48px; color: black; \"></div>";
+
+  // //Edit Pace Clock Button
+  // message += "<button type=\"button\" id=\"btnEditPaceClk\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
+  // message += "\">Edit</button>";
+
+  // //Count Down Checkbox
+  // if(paceCountdown) {
+  //   message += R"rawliteral(
+  //             <label>
+  //               <input type="checkbox" id="checkboxPaceCountdown" checked>
+  //               Countdown
+  //             </label>)rawliteral";
+  // } else {
+  //   message += R"rawliteral(
+  //             <label>
+  //               <input type="checkbox" id="checkboxPaceCountdown">
+  //               Countdown
+  //             </label>)rawliteral";
+  // }
+
+  // message += "<br><br>";    //Line Space
+  // message += "<br><br>";    //Line Space
+
+  // //Home Button
+  // message += "<button type=\"button\" id=\"btnHome\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
+  // message += "background-color: #63de3e;\">";
+  // message += "Home";
+  // message += "</button></td>";
+
+  // message += "<br><br>";    //Line Space
+
+  // //JavaScript Section
+  // message += "<script>";
+  // message += utils_js;
+  // message += pace_clk_js;
+  // message += "</script>";
+
+  // message += "</body></html>";
+
+  // message.replace("INITIAL_PACE_CLK_VAL", String(paceClkMilliSecCnt));
+  // message.replace("PACE_CLK_ROLLOVER_VAL", String(paceClkRolloverMilliSecCnt));
+  // message.replace("PACE_CLK_ENABLE", String(runPaceClk));
+  // message.replace("INITIAL_PACE_COUNTDOWN_STATE", boolToString(paceCountdown));
+
+  // // HTML Section
+  // message = pace_clk_html;
+
+  // // JavaScript Section
+  // message += "<script>";
+  // message += utils_js;
+  // message += pace_clk_js;
+  // message += "</script>";
+
+  // server.send(200, "text/html", message);
+
+  // LittleFS.begin();
+
+  // listFiles(LittleFS, "/", 1);  // Start at root, 1 level deep
+
+  // LittleFS.begin();
+  // File file = LittleFS.open("/pace_clk.html", "r");
+
+  // if (!file) {
+  //   server.send(404, "text/plain", "File not found");
+  // } else {
+  //   server.streamFile(file, "text/html");
+  //   file.close();
+  // }
+  // LittleFS.end();
+}
+
+void webViewConfigPage() {
+  LittleFS.begin();
+
+  if (LittleFS.exists("/config.json")) {
+      //file exists, reading and loading
+      #if defined(SERIAL_DEBUG) && (SERIAL_DEBUG == 1)
+            Serial.println("reading config file");
+      #endif
+      File file = LittleFS.open("/config.json", "r");
+      String content;
+      while (file.available()) {
+        content += (char)file.read();
+      }
+      file.close();
+
+      server.send(200, "text/plain", content);
   } else {
-    message += "background-color: #63de3e;\"\">Run";
+    server.send(404, "text/plain", "Config file not found");
   }
-  message += "</button></td>";
+  
+  //Dump a list of the files
+  listFiles(LittleFS, "/", 1);  // Start at root, 1 level deep
 
-  message += "<br><br>";    //Line Space
-
-  //Pace Clock Display
-  message += "<div id=\"paceClkTimer\" style=\"font-size: 48px; color: black; \"></div>";
-
-  //Edit Pace Clock Button
-  message += "<button type=\"button\" id=\"btnEditPaceClk\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
-  message += "\">Edit</button>";
-
-  //Count Down Checkbox
-  message += R"rawliteral(
-            <label>
-              <input type="checkbox" id="checkboxPaceCountdown" checked>
-              Countdown
-            </label>)rawliteral";
-
-  message += "<br><br>";    //Line Space
-  message += "<br><br>";    //Line Space
-
-  //Home Button
-  message += "<button type=\"button\" id=\"btnHome\" style=\"font-size: 16px; border-radius: 8px; width: 140px; height: 40px; "; 
-  message += "background-color: #63de3e;\">";
-  message += "Home";
-  message += "</button></td>";
-
-  message += "<br><br>";    //Line Space
-
-  //JavaScript Section
-  message += "<script>";
-  message += utils_js;
-  message += pace_clk_js;
-  message += "</script>";
-
-  message += "</body></html>";
-
-  message.replace("INITIAL_PACE_CLK_VAL", String(paceClkMilliSecCnt));
-  message.replace("RESET_PACE_CLK_VAL", String(paceClkMilliSecRstCnt));
-  message.replace("PACE_CLK_ENABLE", String(runPaceClk));
-  message.replace("INITIAL_PACE_COUNTDOWN_STATE", String(paceCountdown));
-
-  server.send(200, "text/html", message);
+  // LittleFS.end();
 }
 
 // ============================
@@ -1058,8 +1145,8 @@ void handleToggleRunGameClk() {
 void handleRstPaceClk() {
   unsigned long deltaMilliSecCnt;
   //Reset the LED Counter
-  paceClkMilliSecCnt = paceClkMilliSecRstCnt;
-  lastPaceClkMilliSecCnt = paceClkMilliSecRstCnt;
+  paceClkMilliSecCnt = paceCountdown ? paceClkRolloverMilliSecCnt : 0;
+  lastPaceClkMilliSecCnt = paceCountdown ? paceClkRolloverMilliSecCnt : 0;
 
   displayPaceClkValue(paceClkMilliSecCnt/1000, CRGB::Green);
   
@@ -1096,7 +1183,28 @@ void handleEditPaceClk() {
 }
 
 void handleTogglePaceCountdown() {
-  paceCountdown = !paceCountdown;
+  if (server.hasArg("paceCountdown")) {
+    // Get the value of the 'paceCountdown' parameter as a string
+    String paceCountdownString = server.arg("paceCountdown");
+    paceCountdown = stringToBool(paceCountdownString);
+    #if defined(SERIAL_DEBUG) && (SERIAL_DEBUG == 1)
+    Serial.println("paceCountdownString = " + paceCountdownString);
+    Serial.println("paceCountdown = " + String(paceCountdown));
+  #endif
+  }
+  server.send(200, "text/plain", "OK");
+}
+
+void handleSetPaceRolloverVal() {
+  if (server.hasArg("paceClkRolloverCnt")) {
+    // Get the value of the 'paceClkRolloverMilliSecCnt' parameter as a string
+    String paceClkRolloverCntString = server.arg("paceClkRolloverCnt");
+    paceClkRolloverMilliSecCnt = 1000*paceClkRolloverCntString.toInt();
+    #if defined(SERIAL_DEBUG) && (SERIAL_DEBUG == 1)
+      Serial.println("paceClkRolloverCntString = " + paceClkRolloverCntString);
+      Serial.println("paceClkRolloverMilliSecCnt = " + String(paceClkRolloverMilliSecCnt));
+    #endif
+  }
   server.send(200, "text/plain", "OK");
 }
 
@@ -1113,7 +1221,8 @@ void setupWebHandlers() {
   server.on("/shot_clock", webShotClockPage);
   server.on("/game_clock", webGameClockPage);
   server.on("/game_and_shot_clk", webGameAndShotClockPage);
-  server.on("/pace_clk", webPaceClockPage);
+  // server.on("/pace_clk", webPaceClockPage);
+  server.on("/view_config", webViewConfigPage);
 
   //Handlers/process actions
   server.on("/toggleDisplayOn", handleDisplayOnToggle);
@@ -1132,6 +1241,7 @@ void setupWebHandlers() {
   server.on("/editPaceClk", handleEditPaceClk);
   server.on("/toggleRunPaceClk", handleToggleRunPaceClk);
   server.on("/togglePaceCountdown", handleTogglePaceCountdown);
+  server.on("/setPaceRolloverVal", handleSetPaceRolloverVal);
   
 
   server.onNotFound(handleNotFound);
@@ -1152,7 +1262,7 @@ void setupSoftAP() {
   Serial.println("SoftAP Created");
   Serial.println("Web server starting...");
 #endif
-  server.begin();
+  // server.begin();
 }
 
 bool setupWifi() {
@@ -1191,7 +1301,7 @@ bool setupWifi() {
   Serial.println(baseIPAddress);
   Serial.println("Starting web server...");
 #endif
-  server.begin();
+  // server.begin();
   return true;
 }
 
@@ -1245,6 +1355,22 @@ void setup() {
   displayShotClkValue(round((float(shotClkMilliSecCnt))/1000), CRGB::Green);
   displayGameClkValue(round((float(gameClkMilliSecCnt))/1000), 0, CRGB::Green);
   FastLED.show();
+
+  //Setup for syncing to other slave clock controllers
+  // esp_now_init();
+  // esp_now_peer_info_t peerInfo = {};
+  // memcpy(peerInfo.peer_addr, receiverAddress, 6);
+  // peerInfo.channel = 0;
+  // peerInfo.encrypt = false;
+  // esp_now_add_peer(&peerInfo);
+  // esp_now_register_send_cb(onSend);
+
+  LittleFS.begin();
+  server.serveStatic("/style.css", LittleFS, "/style.css");
+  server.serveStatic("/pace_clk", LittleFS, "/pace_clk.html");
+  server.serveStatic("/utils.js", LittleFS, "/utils.js");
+  server.serveStatic("/pace_clk.js", LittleFS, "/pace_clk.js");
+  server.begin();
 };
 
 // ===============================================================
@@ -1282,6 +1408,10 @@ void loop() {
     #if defined(SERIAL_DEBUG) && (SERIAL_DEBUG == 1)
       Serial.println("shotClkMilliSecCnt " + String(shotClkMilliSecCnt));
     #endif
+
+    // myData.clockTime = millis() / 1000;
+    // myData.ledState = true;
+    // esp_now_send(receiverAddress, (uint8_t *)&myData, sizeof(myData));
   }
   
   //Game Clock Update
@@ -1303,11 +1433,17 @@ void loop() {
 
   //Pace Clock Update
   if(abs((lastPaceClkMilliSecCnt - paceClkMilliSecCnt)) > 1000) {
-    if(paceClkMilliSecCnt < 0) paceClkMilliSecCnt = paceClkMilliSecRstCnt; //Rollover for countdown
-    else if(paceClkMilliSecCnt > paceClkMilliSecRstCnt) paceClkMilliSecCnt = 0; //Rollover for count up
+    int paceClkCnt = round((float(paceClkMilliSecCnt))/1000);
+    if(paceClkCnt <= 0) {
+      paceClkMilliSecCnt = paceClkMilliSecCnt + paceClkRolloverMilliSecCnt; //Rollover for countdown
+      paceClkCnt = paceClkRolloverMilliSecCnt/1000;
+    } else if(paceClkCnt >= paceClkRolloverMilliSecCnt/1000) { 
+      paceClkMilliSecCnt = paceClkMilliSecCnt - paceClkRolloverMilliSecCnt; //Rollover for count up
+      paceClkCnt = 0;
+    }
     lastPaceClkMilliSecCnt = paceClkMilliSecCnt;
 
-    displayPaceClkValue(round((float(paceClkMilliSecCnt))/1000), CRGB::Green);
+    displayPaceClkValue(paceClkCnt, CRGB::Green);
     
     FastLED.show();
     #if defined(SERIAL_DEBUG) && (SERIAL_DEBUG == 1)
@@ -1506,5 +1642,41 @@ void displayPaceClkDigit(byte digit, byte digitPlace, CRGB color) {
         // Serial.println("pixelPos " + String(pixelPos));
       #endif
     }
+  }
+}
+
+void onSend(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  Serial.print("Send Status: ");
+  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Success" : "Fail");
+}
+
+bool stringToBool(const String str) {
+    return (str == "1" || str == "true" || str == "True");
+}
+
+void listFiles(fs::FS &fs, const char * dirname, uint8_t levels) {
+  Serial.printf("Listing directory: %s\n", dirname);
+
+  File root = fs.open(dirname);
+  if (!root || !root.isDirectory()) {
+    Serial.println("Failed to open directory");
+    return;
+  }
+
+  File file = root.openNextFile();
+  while (file) {
+    if (file.isDirectory()) {
+      Serial.print("DIR : ");
+      Serial.println(file.name());
+      if (levels) {
+        listFiles(fs, file.name(), levels - 1);
+      }
+    } else {
+      Serial.print("FILE: ");
+      Serial.print(file.name());
+      Serial.print("  SIZE: ");
+      Serial.println(file.size());
+    }
+    file = root.openNextFile();
   }
 }

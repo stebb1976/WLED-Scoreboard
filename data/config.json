@@ -1,0 +1,15 @@
+{
+    "device_name": "MatrixClock",
+    "clock_mode": 0,
+    "max_milliamps": 5000,
+    "led_brightness": 64,
+    "hour_format": 12,
+    "time_zone": "EST+5EDT,M3.2.0/2,M11.1.0/2",
+    "gmt_offset": -5,
+    "dst_offset": 1,
+    "ntp_server": "pool.ntp.org",
+    "score_team_left": "&V",
+    "score_team_right": "&H",
+    "use_buzzer": 1,
+    "clock_color": 0
+}
